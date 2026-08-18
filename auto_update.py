@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import time
 import tempfile
 import subprocess
 import urllib.request
@@ -8,6 +9,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 MANIFEST_URL = "https://raw.githubusercontent.com/maakay38/GSPN-Automation/main/manifest.json"
+
 
 def _version_tuple(v):
     parts = []
@@ -18,13 +20,40 @@ def _version_tuple(v):
             parts.append(0)
     return tuple(parts + [0] * (4 - len(parts)))
 
+
+def _load_manifest():
+    """GitHub raw cache'ini atlayarak manifest'i güncel haliyle oku."""
+    last_error = None
+
+    for attempt in range(3):
+        try:
+            cache_buster = int(time.time() * 1000)
+            url = f"{MANIFEST_URL}?t={cache_buster}&attempt={attempt}"
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": "GSPN-Automation-Updater",
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                    "Pragma": "no-cache",
+                    "Expires": "0",
+                    "Accept": "application/json,text/plain,*/*",
+                },
+            )
+
+            with urllib.request.urlopen(req, timeout=10) as r:
+                raw = r.read().decode("utf-8-sig")
+                return json.loads(raw)
+
+        except Exception as e:
+            last_error = e
+            if attempt < 2:
+                time.sleep(1.0)
+
+    raise RuntimeError(f"Güncelleme manifesti okunamadı: {last_error}")
+
+
 def check_for_update(local_version):
-    req = urllib.request.Request(
-        MANIFEST_URL,
-        headers={"User-Agent": "GSPN-Automation-Updater"}
-    )
-    with urllib.request.urlopen(req, timeout=8) as r:
-        data = json.loads(r.read().decode("utf-8"))
+    data = _load_manifest()
 
     remote_version = str(data.get("version", "0.0.0")).strip()
     download_url = str(data.get("download_url", "")).strip()
@@ -38,11 +67,12 @@ def check_for_update(local_version):
 
     return None
 
+
 def download_and_install(root, download_url, current_exe_name, new_version):
     if not getattr(sys, "frozen", False):
         messagebox.showinfo(
             "Güncelleme",
-            "Otomatik güncelleme EXE sürümünde çalışır.\nPython kaynak sürümü çalıştırılıyor."
+            "Otomatik güncelleme EXE sürümünde çalışır.\nPython kaynak sürümü çalıştırılıyor.",
         )
         return
 
@@ -65,11 +95,19 @@ def download_and_install(root, download_url, current_exe_name, new_version):
     win.grab_set()
     win.update()
 
+    # Release asset için de cache'i atla.
+    sep = "&" if "?" in download_url else "?"
+    download_url = f"{download_url}{sep}t={int(time.time() * 1000)}"
+
     req = urllib.request.Request(
         download_url,
-        headers={"User-Agent": "GSPN-Automation-Updater"}
+        headers={
+            "User-Agent": "GSPN-Automation-Updater",
+            "Cache-Control": "no-cache",
+        },
     )
-    with urllib.request.urlopen(req, timeout=30) as r, open(temp_path, "wb") as f:
+
+    with urllib.request.urlopen(req, timeout=60) as r, open(temp_path, "wb") as f:
         total = int(r.headers.get("Content-Length") or 0)
         done = 0
         while True:
@@ -98,6 +136,7 @@ def download_and_install(root, download_url, current_exe_name, new_version):
         f'del /f /q "{target_name}.old" 2>nul',
         'del /f /q "%~f0" 2>nul',
     ]
+
     with open(updater_bat, "w", encoding="utf-8", newline="\r\n") as f:
         f.write("\r\n".join(lines) + "\r\n")
 
