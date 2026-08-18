@@ -9,7 +9,7 @@ import gspn_engine as eng
 import auto_update
 
 APP_TITLE = "GSPN Otomasyon Merkezi"
-APP_VERSION = "2.2.5"
+APP_VERSION = "2.2.6"
 DEFAULT_INTERVAL = 30
 
 
@@ -49,8 +49,10 @@ class GSPNGUI(tk.Tk):
         self._build_ui()
 
         self.after(120, self._drain_queues)
-        self.after(1200, self._check_update_on_start)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # Güncelleme kontrolü UI thread'ini bloklamadan yalnızca bir kez çalışır.
+        threading.Thread(target=self._update_check_worker, daemon=True).start()
 
     # -------------------- UI --------------------
 
@@ -130,6 +132,7 @@ class GSPNGUI(tk.Tk):
         outer = ttk.Frame(self, padding=18)
         outer.pack(fill="both", expand=True)
 
+        # Header
         header = ttk.Frame(outer)
         header.pack(fill="x", pady=(0, 14))
 
@@ -154,6 +157,7 @@ class GSPNGUI(tk.Tk):
         )
         self.connection_badge.pack(side="right")
 
+        # Controls card
         controls = ttk.Frame(outer, style="Card.TFrame", padding=14)
         controls.pack(fill="x", pady=(0, 12))
 
@@ -211,41 +215,96 @@ class GSPNGUI(tk.Tk):
         )
         self.status_label.grid(row=1, column=6, sticky="e", padx=(18, 0))
 
+        # Balanced control layout
         for c in range(7):
             controls.columnconfigure(c, weight=1, uniform="controlcols")
 
+        # Main area - balanced two-column layout
         body = ttk.Frame(outer)
         body.pack(fill="both", expand=True)
         body.columnconfigure(0, weight=1, uniform="maincols")
         body.columnconfigure(1, weight=1, uniform="maincols")
         body.rowconfigure(0, weight=1)
 
+        # Filter card
         filter_card = ttk.Frame(body, style="Card.TFrame", padding=12)
         filter_card.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
 
-        ttk.Label(filter_card, text="Arama Filtreleri", style="CardTitle.TLabel").pack(anchor="w", pady=(0, 8))
+        ttk.Label(
+            filter_card,
+            text="Arama Filtreleri",
+            style="CardTitle.TLabel",
+        ).pack(anchor="w", pady=(0, 8))
 
-        self.filter_canvas = tk.Canvas(filter_card, bg="#111C2E", highlightthickness=0)
-        self.filter_scroll = ttk.Scrollbar(filter_card, orient="vertical", command=self.filter_canvas.yview)
+        self.filter_canvas = tk.Canvas(
+            filter_card,
+            bg="#111C2E",
+            highlightthickness=0,
+        )
+        self.filter_scroll = ttk.Scrollbar(
+            filter_card,
+            orient="vertical",
+            command=self.filter_canvas.yview,
+        )
         self.filter_inner = ttk.Frame(self.filter_canvas, style="Card.TFrame")
-        self.filter_inner.bind("<Configure>", lambda e: self.filter_canvas.configure(scrollregion=self.filter_canvas.bbox("all")))
-        self.filter_window = self.filter_canvas.create_window((0, 0), window=self.filter_inner, anchor="nw")
+
+        self.filter_inner.bind(
+            "<Configure>",
+            lambda e: self.filter_canvas.configure(
+                scrollregion=self.filter_canvas.bbox("all")
+            ),
+        )
+        self.filter_window = self.filter_canvas.create_window(
+            (0, 0),
+            window=self.filter_inner,
+            anchor="nw",
+        )
         self.filter_canvas.configure(yscrollcommand=self.filter_scroll.set)
-        self.filter_canvas.bind("<Configure>", lambda e: self.filter_canvas.itemconfigure(self.filter_window, width=e.width))
+        self.filter_canvas.bind(
+            "<Configure>",
+            lambda e: self.filter_canvas.itemconfigure(
+                self.filter_window,
+                width=e.width,
+            ),
+        )
+
         self.filter_canvas.pack(side="left", fill="both", expand=True)
         self.filter_scroll.pack(side="right", fill="y")
 
-        self.empty_filters = ttk.Label(self.filter_inner, text="GSPN'ye bağlanınca dropdown alanları burada otomatik listelenecek.", style="Field.TLabel")
+        self.empty_filters = ttk.Label(
+            self.filter_inner,
+            text="GSPN'ye bağlanınca dropdown alanları burada otomatik listelenecek.",
+            style="Field.TLabel",
+        )
         self.empty_filters.pack(anchor="w", pady=12)
 
+        # Log card
         log_card = ttk.Frame(body, style="Card.TFrame", padding=12)
         log_card.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
-        ttk.Label(log_card, text="Canlı İşlem Günlüğü", style="CardTitle.TLabel").pack(anchor="w", pady=(0, 8))
 
-        self.log_text = tk.Text(log_card, bg="#08111F", fg="#CFE3FF", insertbackground="#FFFFFF", relief="flat", font=("Consolas", 9), wrap="word", padx=10, pady=10)
+        ttk.Label(
+            log_card,
+            text="Canlı İşlem Günlüğü",
+            style="CardTitle.TLabel",
+        ).pack(anchor="w", pady=(0, 8))
+
+        self.log_text = tk.Text(
+            log_card,
+            bg="#08111F",
+            fg="#CFE3FF",
+            insertbackground="#FFFFFF",
+            relief="flat",
+            font=("Consolas", 9),
+            wrap="word",
+            padx=10,
+            pady=10,
+        )
         self.log_text.pack(fill="both", expand=True)
         self.log_text.configure(state="disabled")
+
         self._append_log("GUI hazır. Önce 'Bağlan & Alanları Yükle' butonuna basın.")
+
+    # -------------------- Logging --------------------
 
     def _append_log(self, text):
         stamp = time.strftime("%H:%M:%S")
@@ -271,23 +330,38 @@ class GSPNGUI(tk.Tk):
             while True:
                 text, connected = self.status_queue.get_nowait()
                 self.status_label.configure(text=text)
+
                 if connected is True:
-                    self.connection_badge.configure(text="● GSPN bağlı", fg="#86EFAC")
+                    self.connection_badge.configure(
+                        text="● GSPN bağlı",
+                        fg="#86EFAC",
+                    )
                 elif connected is False:
-                    self.connection_badge.configure(text="● Bağlı değil", fg="#FCA5A5")
+                    self.connection_badge.configure(
+                        text="● Bağlı değil",
+                        fg="#FCA5A5",
+                    )
         except queue.Empty:
             pass
 
         self.after(120, self._drain_queues)
 
+    # -------------------- Selenium discovery --------------------
+
     def _connect_and_prepare(self):
         self._log("Chrome oturumuna bağlanılıyor...")
         driver = eng.connect()
+
+        # Management only once, existing operate.do is reused.
         work = eng.step2_management(driver)
         driver.switch_to.window(work)
+
+        # Lite page only once if needed.
         eng.step3_work_order_lite(driver)
+
         self.driver = driver
         self.work_handle = work
+
         self._set_status("Bağlandı", True)
         self._log("GSPN İş Emirlerini Listele Lite ekranı hazır.")
 
@@ -300,12 +374,15 @@ class GSPNGUI(tk.Tk):
     def _discover_selects(self):
         self._switch_right()
         d = self.driver
+
         raw = d.execute_script(r"""
             const selects = Array.from(document.querySelectorAll('select'));
             function clean(s){ return (s || '').replace(/\s+/g,' ').trim(); }
+
             return selects.map((s, idx) => {
                 const r = s.getBoundingClientRect();
                 if (r.width <= 0 || r.height <= 0) return null;
+
                 let label = '';
                 const tr = s.closest('tr');
                 if (tr) {
@@ -317,6 +394,7 @@ class GSPNGUI(tk.Tk):
                         const cr = c.getBoundingClientRect();
                         const t = clean(c.innerText);
                         if (!t || t.length > 80) continue;
+
                         const sameRow = Math.abs((cr.y + cr.height/2) - (sRect.y + sRect.height/2)) < 18;
                         const left = cr.x < sRect.x;
                         if (sameRow && left) {
@@ -326,167 +404,400 @@ class GSPNGUI(tk.Tk):
                     }
                     if (best) label = best.text;
                 }
+
                 if (!label) {
                     const parentText = clean(s.parentElement ? s.parentElement.innerText : '');
                     if (parentText && parentText.length <= 80) label = parentText;
                 }
-                const options = Array.from(s.options).map(o => ({text: clean(o.text), value: o.value}));
-                return {idx, id: s.id || '', name: s.name || '', label: label || s.id || s.name || ('Select ' + (idx+1)), options, selectedText: s.options[s.selectedIndex] ? clean(s.options[s.selectedIndex].text) : ''};
+
+                const options = Array.from(s.options).map(o => ({
+                    text: clean(o.text),
+                    value: o.value
+                }));
+
+                return {
+                    idx,
+                    id: s.id || '',
+                    name: s.name || '',
+                    label: label || s.id || s.name || ('Select ' + (idx+1)),
+                    options,
+                    selectedText: s.options[s.selectedIndex] ? clean(s.options[s.selectedIndex].text) : ''
+                };
             }).filter(Boolean);
         """)
 
         infos = []
         used_labels = {}
+
         for item in raw:
             label = item["label"].strip() or item["id"] or item["name"] or "Dropdown"
             used_labels[label] = used_labels.get(label, 0) + 1
-            display_label = label if used_labels[label] == 1 else f"{label} ({used_labels[label]})"
+            display_label = label
+            if used_labels[label] > 1:
+                display_label = f"{label} ({used_labels[label]})"
+
             key = item["id"] or item["name"] or f"idx:{item['idx']}"
-            infos.append(SelectInfo(key=key, label=display_label, element_id=item["id"], element_name=item["name"], options=[o["text"] for o in item["options"]], values=[o["value"] for o in item["options"]], selected_text=item["selectedText"]))
+
+            infos.append(
+                SelectInfo(
+                    key=key,
+                    label=display_label,
+                    element_id=item["id"],
+                    element_name=item["name"],
+                    options=[o["text"] for o in item["options"]],
+                    values=[o["value"] for o in item["options"]],
+                    selected_text=item["selectedText"],
+                )
+            )
+
         self.driver.switch_to.default_content()
         return infos
 
     def _canonical_filter_name(self, label, info):
         text = (label or "").strip()
         low = text.casefold()
-        if "şube" in low or "sube" in low: return "Şube"
-        if low == "durum" or "status" in low: return "Durum"
-        if "neden" in low or "reason" in low: return "Neden"
-        if "teknisyen" in low or "technician" in low: return "Teknisyen"
-        if low == "ürün" or low == "urun" or "product" in low: return "Ürün"
-        if "g.dahili/harici" in low or "dahili/harici" in low or "garanti" in low or "warranty" in low: return "Garanti Durumu"
+
+        # Normalize requested fields only.
+        if "şube" in low or "sube" in low:
+            return "Şube"
+        if low == "durum" or "status" in low:
+            return "Durum"
+        if "neden" in low or "reason" in low:
+            return "Neden"
+        if "teknisyen" in low or "technician" in low:
+            return "Teknisyen"
+        if low == "ürün" or low == "urun" or "product" in low:
+            return "Ürün"
+        if (
+            "g.dahili/harici" in low
+            or "dahili/harici" in low
+            or "garanti" in low
+            or "warranty" in low
+        ):
+            return "Garanti Durumu"
+
+        # ID/name based fallback for older GSPN labels.
         key = f"{info.element_id} {info.element_name}".casefold()
-        if "status" in key: return "Durum"
-        if "reason" in key: return "Neden"
-        if "tech" in key or "engineer" in key: return "Teknisyen"
-        if "product" in key or "prd" in key: return "Ürün"
-        if "warranty" in key or "garanti" in key: return "Garanti Durumu"
-        if "branch" in key or "sube" in key: return "Şube"
+        if "status" in key:
+            return "Durum"
+        if "reason" in key:
+            return "Neden"
+        if "tech" in key or "engineer" in key:
+            return "Teknisyen"
+        if "product" in key or "prd" in key:
+            return "Ürün"
+        if "warranty" in key or "garanti" in key:
+            return "Garanti Durumu"
+        if "branch" in key or "sube" in key:
+            return "Şube"
+
         return None
 
     def _filter_requested_infos(self, infos):
-        wanted_order = ["Şube", "Durum", "Neden", "Teknisyen", "Ürün", "Garanti Durumu"]
+        wanted_order = [
+            "Şube",
+            "Durum",
+            "Neden",
+            "Teknisyen",
+            "Ürün",
+            "Garanti Durumu",
+        ]
+
         selected = {}
         for info in infos:
             canonical = self._canonical_filter_name(info.label, info)
             if canonical and canonical not in selected:
                 info.label = canonical
                 selected[canonical] = info
+
         return [selected[name] for name in wanted_order if name in selected]
 
     def _render_selects(self, infos):
         infos = self._filter_requested_infos(infos)
+
         for child in self.filter_inner.winfo_children():
             child.destroy()
-        self.select_infos.clear(); self.select_vars.clear(); self.combo_widgets.clear()
+
+        self.select_infos.clear()
+        self.select_vars.clear()
+        self.combo_widgets.clear()
+
         for row, info in enumerate(infos):
             self.select_infos[info.key] = info
-            ttk.Label(self.filter_inner, text=info.label, style="Field.TLabel").grid(row=row, column=0, sticky="w", padx=(0, 10), pady=5)
+
+            lbl = ttk.Label(
+                self.filter_inner,
+                text=info.label,
+                style="Field.TLabel",
+            )
+            lbl.grid(row=row, column=0, sticky="w", padx=(0, 10), pady=5)
+
             var = tk.StringVar(value=info.selected_text)
-            combo = ttk.Combobox(self.filter_inner, textvariable=var, values=info.options, state="readonly", width=38)
+            combo = ttk.Combobox(
+                self.filter_inner,
+                textvariable=var,
+                values=info.options,
+                state="readonly",
+                width=38,
+            )
             combo.grid(row=row, column=1, sticky="ew", pady=5)
-            self.select_vars[info.key] = var; self.combo_widgets[info.key] = combo
+
+            self.select_vars[info.key] = var
+            self.combo_widgets[info.key] = combo
+
         self.filter_inner.columnconfigure(1, weight=1)
 
+        if not infos:
+            ttk.Label(
+                self.filter_inner,
+                text="Bu ekranda görünür dropdown bulunamadı.",
+                style="Field.TLabel",
+            ).pack(anchor="w", pady=10)
+
     def _apply_gui_filters(self):
-        self._switch_right(); d = self.driver
+        self._switch_right()
+        d = self.driver
+
         for key, info in list(self.select_infos.items()):
             selected_text = self.select_vars[key].get().strip()
-            if not selected_text: continue
+            if not selected_text:
+                continue
+
+            # Locate select by stable id/name. If neither exists, skip safely.
             el = None
             if info.element_id:
-                els = d.find_elements(eng.By.ID, info.element_id); el = els[0] if els else None
+                els = d.find_elements(eng.By.ID, info.element_id)
+                if els:
+                    el = els[0]
             if el is None and info.element_name:
-                els = d.find_elements(eng.By.NAME, info.element_name); el = els[0] if els else None
-            if el is None: continue
-            sel = eng.Select(el); current = eng.norm(sel.first_selected_option.text)
-            if current == selected_text: continue
+                els = d.find_elements(eng.By.NAME, info.element_name)
+                if els:
+                    el = els[0]
+            if el is None:
+                continue
+
+            sel = eng.Select(el)
+            current = eng.norm(sel.first_selected_option.text)
+
+            if current == selected_text:
+                continue
+
+            matched = False
             for opt in sel.options:
                 if eng.norm(opt.text) == selected_text:
                     value = eng.safe_attr(opt, "value")
-                    sel.select_by_value(value) if value else sel.select_by_visible_text(opt.text)
-                    d.execute_script("arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", el)
-                    self._log(f"Filtre uygulandı: {info.label} = {selected_text}")
-                    time.sleep(0.15); break
+                    if value:
+                        sel.select_by_value(value)
+                    else:
+                        sel.select_by_visible_text(opt.text)
+                    matched = True
+                    break
+
+            if matched:
+                d.execute_script(
+                    "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));",
+                    el,
+                )
+                self._log(f"Filtre uygulandı: {info.label} = {selected_text}")
+                time.sleep(0.15)
+
         d.switch_to.default_content()
 
+    # -------------------- Button handlers --------------------
+
     def on_connect(self):
-        if self.worker_thread and self.worker_thread.is_alive(): return
-        self.connect_btn.configure(state="disabled"); self._set_status("Bağlanıyor...", None)
+        if self.worker_thread and self.worker_thread.is_alive():
+            return
+
+        self.connect_btn.configure(state="disabled")
+        self._set_status("Bağlanıyor...", None)
+
         def task():
             try:
-                self._connect_and_prepare(); infos = self._discover_selects()
-                self.after(0, lambda: self._render_selects(infos)); self.after(0, lambda: self.start_btn.configure(state="normal")); self.after(0, lambda: self.refresh_btn.configure(state="normal"))
-                shown = len(self._filter_requested_infos(infos)); self._log(f"{shown} arama filtresi yüklendi.")
+                self._connect_and_prepare()
+                infos = self._discover_selects()
+                self.after(0, lambda: self._render_selects(infos))
+                self.after(0, lambda: self.start_btn.configure(state="normal"))
+                self.after(0, lambda: self.refresh_btn.configure(state="normal"))
+                shown = len(self._filter_requested_infos(infos))
+                self._log(f"{shown} arama filtresi yüklendi.")
             except Exception as e:
-                self._set_status("Bağlantı hatası", False); self._log(f"Bağlantı hatası: {e}")
+                self._set_status("Bağlantı hatası", False)
+                self._log(f"Bağlantı hatası: {e}")
             finally:
                 self.after(0, lambda: self.connect_btn.configure(state="normal"))
+
         threading.Thread(target=task, daemon=True).start()
 
     def on_refresh(self):
         def task():
             try:
-                infos = self._discover_selects(); self.after(0, lambda: self._render_selects(infos)); self._log("Arama filtreleri yenilendi.")
-            except Exception as e: self._log(f"Dropdown yenileme hatası: {e}")
+                infos = self._discover_selects()
+                self.after(0, lambda: self._render_selects(infos))
+                self._log("Arama filtreleri yenilendi.")
+            except Exception as e:
+                self._log(f"Dropdown yenileme hatası: {e}")
+
         threading.Thread(target=task, daemon=True).start()
 
     def on_start(self):
-        if self.worker_thread and self.worker_thread.is_alive(): return
+        if self.worker_thread and self.worker_thread.is_alive():
+            return
+
         try:
             interval = int(self.interval_var.get().strip())
-            if interval < 3: raise ValueError
+            if interval < 3:
+                raise ValueError
         except ValueError:
-            messagebox.showwarning("Bekleme Süresi", "Bekleme süresi en az 3 saniye olan bir tam sayı olmalı."); return
+            messagebox.showwarning(
+                "Bekleme Süresi",
+                "Bekleme süresi en az 3 saniye olan bir tam sayı olmalı.",
+            )
+            return
+
         if not self.driver:
-            messagebox.showwarning("Bağlantı", "Önce 'Bağlan & Alanları Yükle' butonuna basın."); return
-        self.stop_event.clear(); self.start_btn.configure(state="disabled"); self.stop_btn.configure(state="normal"); self.connect_btn.configure(state="disabled"); self.refresh_btn.configure(state="disabled")
-        self.worker_thread = threading.Thread(target=self._automation_loop, args=(interval,), daemon=True); self.worker_thread.start()
+            messagebox.showwarning(
+                "Bağlantı",
+                "Önce 'Bağlan & Alanları Yükle' butonuna basın.",
+            )
+            return
+
+        self.stop_event.clear()
+        self.start_btn.configure(state="disabled")
+        self.stop_btn.configure(state="normal")
+        self.connect_btn.configure(state="disabled")
+        self.refresh_btn.configure(state="disabled")
+
+        self.worker_thread = threading.Thread(
+            target=self._automation_loop,
+            args=(interval,),
+            daemon=True,
+        )
+        self.worker_thread.start()
 
     def on_stop(self):
-        self.stop_event.set(); self._set_status("Durduruluyor...", True); self._log("Durdurma isteği gönderildi.")
+        self.stop_event.set()
+        self._set_status("Durduruluyor...", True)
+        self._log("Durdurma isteği gönderildi.")
+
+    # -------------------- Main loop --------------------
 
     def _automation_loop(self, interval):
-        self._set_status("Çalışıyor", True); self._log(f"Sürekli takip başladı. Arama aralığı: {interval} saniye.")
+        self._set_status("Çalışıyor", True)
+        self._log(f"Sürekli takip başladı. Arama aralığı: {interval} saniye.")
+
         cycle = 0
+
         try:
             while not self.stop_event.is_set():
-                cycle += 1; self._log(f"──── Döngü #{cycle} ────")
+                cycle += 1
+                self._log(f"──── Döngü #{cycle} ────")
+
                 try:
-                    self._apply_gui_filters(); found = eng.click_search_and_find_edit(self.driver)
+                    # Apply every GUI dropdown selection before Search.
+                    self._apply_gui_filters()
+
+                    found = eng.click_search_and_find_edit(self.driver)
+
                     if found:
-                        self._log("Kayıt bulundu. Edit açıldı."); eng.process_current_record(self.driver); self._log("Kayıt işlemi ve Save tamamlandı."); eng.return_to_work_order_list(self.driver); self._log("Liste ekranına dönüldü.")
-                    else: self._log("Kayıt bulunamadı.")
+                        self._log("Kayıt bulundu. Edit açıldı.")
+                        eng.process_current_record(self.driver)
+                        self._log("Kayıt işlemi ve Save tamamlandı.")
+
+                        eng.return_to_work_order_list(self.driver)
+                        self._log("Liste ekranına dönüldü.")
+
+                        # Some dependent dropdowns can change after return.
+                        # GUI choices are re-applied on the next loop.
+                    else:
+                        self._log("Kayıt bulunamadı.")
+
                 except Exception as e:
                     self._log(f"Döngü hatası: {e}")
-                    try: eng.return_to_work_order_list(self.driver); self._log("Hata sonrası liste ekranına dönüldü.")
-                    except Exception as recovery_error: self._log(f"Toparlanma hatası: {recovery_error}")
-                if self.stop_event.wait(interval): break
-        finally:
-            self._set_status("Durduruldu", True); self._log("Sürekli takip durduruldu.")
-            self.after(0, lambda: self.start_btn.configure(state="normal")); self.after(0, lambda: self.stop_btn.configure(state="disabled")); self.after(0, lambda: self.connect_btn.configure(state="normal")); self.after(0, lambda: self.refresh_btn.configure(state="normal"))
 
-    def _check_update_on_start(self):
+                    try:
+                        eng.return_to_work_order_list(self.driver)
+                        self._log("Hata sonrası liste ekranına dönüldü.")
+                    except Exception as recovery_error:
+                        self._log(f"Toparlanma hatası: {recovery_error}")
+
+                if self.stop_event.wait(interval):
+                    break
+
+        finally:
+            self._set_status("Durduruldu", True)
+            self._log("Sürekli takip durduruldu.")
+
+            self.after(0, lambda: self.start_btn.configure(state="normal"))
+            self.after(0, lambda: self.stop_btn.configure(state="disabled"))
+            self.after(0, lambda: self.connect_btn.configure(state="normal"))
+            self.after(0, lambda: self.refresh_btn.configure(state="normal"))
+
+    def _update_check_worker(self):
+        """GitHub sürüm kontrolünü arka planda bir kez yap."""
         if self._update_check_started:
             return
         self._update_check_started = True
 
+        self._log(f"Güncelleme kontrolü başladı. Mevcut sürüm: v{APP_VERSION}")
+
         try:
             result = auto_update.check_for_update(APP_VERSION)
+
             if not result:
+                self._log("Güncelleme kontrolü tamamlandı: yeni sürüm yok.")
                 return
+
             remote_version, download_url, notes = result
-            msg = f"Yeni sürüm bulundu: v{remote_version}\n\nMevcut sürüm: v{APP_VERSION}\nYeni sürüm: v{remote_version}\n"
-            if notes: msg += f"\nNotlar:\n{notes}\n"
-            if messagebox.askyesno("Güncelleme Bulundu", msg + "\nŞimdi güncellensin mi?"):
-                self._append_log(f"Yeni sürüm indiriliyor: v{remote_version}")
-                auto_update.download_and_install(root=self, download_url=download_url, current_exe_name="GSPN_Otomasyon.exe", new_version=remote_version)
+            self._log(f"GitHub'da yeni sürüm bulundu: v{remote_version}")
+
+            # Tkinter popup sadece ana UI thread'inde açılır.
+            self.after(
+                0,
+                lambda rv=remote_version, du=download_url, nt=notes:
+                    self._show_update_prompt(rv, du, nt)
+            )
+
         except Exception as e:
-            self._append_log(f"Güncelleme kontrolü atlandı: {e}")
+            self._log(f"Güncelleme kontrolü HATASI: {type(e).__name__}: {e}")
+
+    def _show_update_prompt(self, remote_version, download_url, notes):
+        msg = (
+            f"Yeni sürüm bulundu: v{remote_version}\n\n"
+            f"Mevcut sürüm: v{APP_VERSION}\n"
+            f"Yeni sürüm: v{remote_version}\n"
+        )
+
+        if notes:
+            msg += f"\nNotlar:\n{notes}\n"
+
+        if messagebox.askyesno(
+            "Güncelleme Bulundu",
+            msg + "\nŞimdi güncellensin mi?"
+        ):
+            self._append_log(f"Yeni sürüm indiriliyor: v{remote_version}")
+
+            try:
+                auto_update.download_and_install(
+                    root=self,
+                    download_url=download_url,
+                    current_exe_name="GSPN_Otomasyon.exe",
+                    new_version=remote_version,
+                )
+            except Exception as e:
+                self._append_log(
+                    f"Güncelleme indirme/kurulum HATASI: {type(e).__name__}: {e}"
+                )
+                messagebox.showerror(
+                    "Güncelleme Hatası",
+                    f"Güncelleme kurulamadı.\n\n{e}"
+                )
 
     def _on_close(self):
-        self.stop_event.set(); self.destroy()
+        self.stop_event.set()
+        self.destroy()
 
 
 if __name__ == "__main__":
-    app = GSPNGUI(); app.mainloop()
+    app = GSPNGUI()
+    app.mainloop()
