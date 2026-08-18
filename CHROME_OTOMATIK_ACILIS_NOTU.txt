@@ -1,0 +1,19 @@
+GSPN V2.2.14 - Chrome Otomatik Açılış
+=====================================
+
+Sorun:
+Kullanıcı bilgisayarında 'Bağlan & Alanları Yükle' tıklandığında Chrome
+127.0.0.1:9222 remote-debugging modunda açık değilse uygulama bağlanamıyordu.
+
+Düzeltme:
+- 9222 debug portu kontrol edilir.
+- Kapalıysa Google Chrome otomatik bulunur ve açılır.
+- Chrome, ayrı ve kalıcı GSPN profiliyle açılır:
+  %LOCALAPPDATA%\GSPN_Automasyon\ChromeProfile
+- GSPN ana sayfası otomatik açılır.
+- İlk kullanımda kullanıcı girişini manuel yapabilir.
+- Program GSPN main.jsp sayfasını 3 dakika boyunca bekler.
+- Sonraki kullanımlarda aynı profil sayesinde oturum bilgileri korunabilir.
+
+Not:
+Bu değişiklik stabil GSPN_Statü_Güncelleme.zip temel alınarak yapılmıştır.
