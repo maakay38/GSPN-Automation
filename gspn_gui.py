@@ -9,7 +9,7 @@ import gspn_engine as eng
 import auto_update
 
 APP_TITLE = "GSPN Otomasyon Merkezi"
-APP_VERSION = "2.2.8"
+APP_VERSION = "2.2.9"
 DEFAULT_INTERVAL = 30
 
 
