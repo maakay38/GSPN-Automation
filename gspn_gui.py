@@ -9,7 +9,7 @@ import gspn_engine as eng
 import auto_update
 
 APP_TITLE = "GSPN Otomasyon Merkezi"
-APP_VERSION = "2.2.14"
+APP_VERSION = "2.2.15"
 DEFAULT_INTERVAL = 30
 
 
@@ -349,8 +349,15 @@ class GSPNGUI(tk.Tk):
     # -------------------- Selenium discovery --------------------
 
     def _connect_and_prepare(self):
-        self._log("Chrome oturumuna bağlanılıyor...")
+        self._log("Chrome oturumu kontrol ediliyor...")
         driver = eng.connect()
+        self._log("Chrome hazır.")
+
+        self._log(
+            "GSPN ana sayfası bekleniyor. Gerekirse açılan Chrome'da giriş yapın..."
+        )
+        eng.wait_for_gspn_main(driver, timeout=180)
+        self._log("GSPN ana sayfası bulundu.")
 
         # Management only once, existing operate.do is reused.
         work = eng.step2_management(driver)

@@ -4,6 +4,10 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select, WebDriverWait
 import re
 import time
+import os
+import socket
+import subprocess
+from pathlib import Path
 
 DEBUG_ADDRESS = "127.0.0.1:9222"
 DATE_RE = re.compile(r"^\d{2}\.\d{2}\.\d{4}$")
@@ -11,10 +15,144 @@ DATE_RE = re.compile(r"^\d{2}\.\d{2}\.\d{4}$")
 def log(msg):
     print(msg)
 
+def _debug_port_open(host="127.0.0.1", port=9222, timeout=0.35):
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _find_chrome_exe():
+    candidates = []
+
+    for env_name in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+        base = os.environ.get(env_name)
+        if base:
+            candidates.extend([
+                Path(base) / "Google" / "Chrome" / "Application" / "chrome.exe",
+                Path(base) / "Google" / "Chrome Beta" / "Application" / "chrome.exe",
+            ])
+
+    # Common Windows locations as fallback.
+    candidates.extend([
+        Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+        Path(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
+    ])
+
+    for p in candidates:
+        try:
+            if p.exists():
+                return str(p)
+        except Exception:
+            pass
+
+    return None
+
+
+def _launch_debug_chrome():
+    chrome = _find_chrome_exe()
+    if not chrome:
+        raise RuntimeError(
+            "Google Chrome bulunamadı. Chrome'un kurulu olduğundan emin olun."
+        )
+
+    local_appdata = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    profile_dir = os.path.join(
+        local_appdata,
+        "GSPN_Automasyon",
+        "ChromeProfile",
+    )
+    os.makedirs(profile_dir, exist_ok=True)
+
+    args = [
+        chrome,
+        "--remote-debugging-port=9222",
+        f"--user-data-dir={profile_dir}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "https://gspn1.samsungcsportal.com/main.jsp",
+    ]
+
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+
+    subprocess.Popen(
+        args,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=creationflags,
+    )
+
+    end = time.time() + 20
+    while time.time() < end:
+        if _debug_port_open():
+            return
+        time.sleep(0.4)
+
+    raise RuntimeError(
+        "Chrome açıldı fakat 9222 debug portu hazır hale gelmedi."
+    )
+
+
 def connect():
+    """
+    Önce mevcut 127.0.0.1:9222 Chrome oturumuna bağlanır.
+    Port kapalıysa Chrome'u otomatik olarak özel GSPN profiliyle açar.
+    """
+    if not _debug_port_open():
+        log("Chrome debug oturumu bulunamadı; Chrome otomatik açılıyor...")
+        _launch_debug_chrome()
+        log("Chrome debug oturumu hazır.")
+
     options = Options()
     options.debugger_address = DEBUG_ADDRESS
-    return webdriver.Chrome(options=options)
+
+    try:
+        return webdriver.Chrome(options=options)
+    except Exception as first_error:
+        # Port görünse bile eski/bozuk Chrome oturumu olabilir.
+        # Bir kez yeniden başlatmayı deniyoruz.
+        if not _debug_port_open():
+            _launch_debug_chrome()
+            options = Options()
+            options.debugger_address = DEBUG_ADDRESS
+            return webdriver.Chrome(options=options)
+
+        raise RuntimeError(
+            "Chrome'a bağlanılamadı. "
+            f"Detay: {first_error}"
+        )
+
+
+def wait_for_gspn_main(driver, timeout=180):
+    """
+    Kullanıcı ilk açılışta giriş yapmak zorundaysa, GSPN main.jsp
+    görünene kadar bekler. Kullanıcı bu sırada açılan Chrome'da giriş yapabilir.
+    """
+    end = time.time() + timeout
+
+    while time.time() < end:
+        try:
+            for h in driver.window_handles:
+                try:
+                    driver.switch_to.window(h)
+                    url = (driver.current_url or "").lower()
+                    if "gspn1.samsungcsportal.com/main.jsp" in url:
+                        driver.switch_to.default_content()
+                        return h
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        time.sleep(1)
+
+    raise RuntimeError(
+        "GSPN ana sayfası 3 dakika içinde bulunamadı. "
+        "Açılan Chrome penceresinde GSPN'ye giriş yapıp ana sayfayı açın."
+    )
 
 def norm(s):
     return " ".join((s or "").replace("\xa0", " ").split()).strip()
