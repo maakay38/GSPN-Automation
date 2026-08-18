@@ -195,6 +195,7 @@ def download_and_install(root, download_url, current_exe_name, new_version):
         f'move /y "{temp_name}" "{target_name}" >nul',
         f'if not exist "{target_name}" exit /b 2',
         "timeout /t 2 /nobreak >nul",
+        'set "PYINSTALLER_RESET_ENVIRONMENT=1"',
         f'start "" "{target_name}"',
         "timeout /t 3 /nobreak >nul",
         f'del /f /q "{target_name}.old" 2>nul',
@@ -204,9 +205,13 @@ def download_and_install(root, download_url, current_exe_name, new_version):
     with open(updater_bat, "w", encoding="utf-8", newline="\r\n") as f:
         f.write("\r\n".join(lines) + "\r\n")
 
+    updater_env = os.environ.copy()
+    updater_env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+
     subprocess.Popen(
         ["cmd.exe", "/c", updater_bat],
         cwd=exe_dir,
+        env=updater_env,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
 
