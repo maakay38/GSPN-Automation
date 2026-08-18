@@ -5,75 +5,86 @@ import time
 import tempfile
 import subprocess
 import urllib.request
-import urllib.error
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-RAW_MANIFEST_URL = "https://raw.githubusercontent.com/maakay38/GSPN-Automation/main/manifest.json"
-API_MANIFEST_URL = "https://api.github.com/repos/maakay38/GSPN-Automation/contents/manifest.json"
+LATEST_RELEASE_API = "https://api.github.com/repos/maakay38/GSPN-Automation/releases/latest"
+EXPECTED_ASSET = "GSPN_Otomasyon.exe"
+
 
 def _version_tuple(v):
-    nums = []
-    for p in str(v).strip().lstrip("vV").split("."):
+    values = []
+    for part in str(v).strip().lstrip("vV").split("."):
         try:
-            nums.append(int(p))
+            values.append(int(part))
         except ValueError:
-            nums.append(0)
-    return tuple((nums + [0, 0, 0, 0])[:4])
+            values.append(0)
+    return tuple((values + [0, 0, 0, 0])[:4])
 
-def _request_json(url, timeout=10):
+
+def _github_json(url, timeout=15):
     sep = "&" if "?" in url else "?"
     url = f"{url}{sep}_={int(time.time() * 1000)}"
 
     req = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "GSPN-Automation-Updater/2",
-            "Accept": "application/vnd.github+json, application/json, text/plain, */*",
+            "User-Agent": "GSPN-Automation-Updater/3.0",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
             "Cache-Control": "no-cache, no-store, max-age=0",
             "Pragma": "no-cache",
         },
     )
 
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read().decode("utf-8-sig")
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8-sig"))
 
-def _load_manifest():
-    errors = []
-
-    # 1. GitHub RAW
-    for attempt in range(2):
-        try:
-            return json.loads(_request_json(RAW_MANIFEST_URL))
-        except Exception as e:
-            errors.append(f"RAW[{attempt+1}]: {e}")
-            time.sleep(0.5)
-
-    # 2. GitHub Contents API fallback
-    try:
-        api_data = json.loads(_request_json(API_MANIFEST_URL))
-        import base64
-        raw = base64.b64decode(api_data["content"]).decode("utf-8-sig")
-        return json.loads(raw)
-    except Exception as e:
-        errors.append(f"API: {e}")
-
-    raise RuntimeError(" | ".join(errors))
 
 def check_for_update(local_version):
-    data = _load_manifest()
+    """
+    Güncelleme kaynağı sadece GitHub Latest Release API'dir.
+    manifest.json sürüm kararı için kullanılmaz.
+    """
+    last_error = None
 
-    remote_version = str(data.get("version", "0.0.0")).strip()
-    download_url = str(data.get("download_url", "")).strip()
-    notes = str(data.get("notes", "")).strip()
+    for attempt in range(3):
+        try:
+            release = _github_json(LATEST_RELEASE_API)
 
-    if not download_url:
-        raise RuntimeError("manifest.json içinde download_url boş.")
+            tag = str(release.get("tag_name", "")).strip()
+            remote_version = tag.lstrip("vV")
 
-    if _version_tuple(remote_version) > _version_tuple(local_version):
-        return remote_version, download_url, notes
+            if not remote_version:
+                raise RuntimeError("Latest Release tag_name boş.")
 
-    return None
+            download_url = ""
+            assets = release.get("assets") or []
+
+            for asset in assets:
+                if str(asset.get("name", "")).strip() == EXPECTED_ASSET:
+                    download_url = str(asset.get("browser_download_url", "")).strip()
+                    break
+
+            if not download_url:
+                raise RuntimeError(
+                    f"Latest Release içinde {EXPECTED_ASSET} bulunamadı."
+                )
+
+            notes = str(release.get("body") or release.get("name") or "").strip()
+
+            if _version_tuple(remote_version) > _version_tuple(local_version):
+                return remote_version, download_url, notes
+
+            return None
+
+        except Exception as e:
+            last_error = e
+            if attempt < 2:
+                time.sleep(1)
+
+    raise RuntimeError(f"GitHub Latest Release okunamadı: {last_error}")
+
 
 def download_and_install(root, download_url, current_exe_name, new_version):
     if not getattr(sys, "frozen", False):
@@ -96,19 +107,19 @@ def download_and_install(root, download_url, current_exe_name, new_version):
 
     win = tk.Toplevel(root)
     win.title(f"GSPN Güncelleme v{new_version}")
-    win.geometry("430x150")
+    win.geometry("440x160")
     win.resizable(False, False)
 
     ttk.Label(
         win,
-        text=f"Yeni sürüm indiriliyor: v{new_version}"
+        text=f"Yeni sürüm indiriliyor: v{new_version}",
     ).pack(pady=(18, 8))
 
-    pb = ttk.Progressbar(win, length=370, mode="determinate")
-    pb.pack(pady=8)
+    progress = ttk.Progressbar(win, length=380, mode="determinate")
+    progress.pack(pady=8)
 
-    lbl = ttk.Label(win, text="%0")
-    lbl.pack()
+    percent = ttk.Label(win, text="%0")
+    percent.pack()
 
     win.transient(root)
     win.grab_set()
@@ -120,34 +131,35 @@ def download_and_install(root, download_url, current_exe_name, new_version):
     req = urllib.request.Request(
         final_url,
         headers={
-            "User-Agent": "GSPN-Automation-Updater/2",
+            "User-Agent": "GSPN-Automation-Updater/3.0",
             "Cache-Control": "no-cache, no-store",
             "Pragma": "no-cache",
         },
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=90) as r, open(temp_path, "wb") as f:
-            total = int(r.headers.get("Content-Length") or 0)
-            done = 0
+        with urllib.request.urlopen(req, timeout=120) as response, open(temp_path, "wb") as f:
+            total = int(response.headers.get("Content-Length") or 0)
+            received = 0
 
             while True:
-                chunk = r.read(1024 * 256)
+                chunk = response.read(1024 * 256)
                 if not chunk:
                     break
 
                 f.write(chunk)
-                done += len(chunk)
+                received += len(chunk)
 
                 if total:
-                    pct = min(100, done * 100 / total)
-                    pb["value"] = pct
-                    lbl.configure(text=f"%{pct:.0f}")
+                    pct = min(100, received * 100 / total)
+                    progress["value"] = pct
+                    percent.configure(text=f"%{pct:.0f}")
                     win.update_idletasks()
 
-        if os.path.getsize(temp_path) < 1024 * 1024:
+        size = os.path.getsize(temp_path)
+        if size < 5 * 1024 * 1024:
             raise RuntimeError(
-                "İndirilen EXE beklenenden küçük. Release indirme bağlantısı kontrol edilmeli."
+                f"İndirilen EXE beklenenden küçük ({size} byte)."
             )
 
     except Exception:
@@ -164,15 +176,18 @@ def download_and_install(root, download_url, current_exe_name, new_version):
     updater_bat = os.path.join(exe_dir, "_gspn_update.bat")
     temp_name = os.path.basename(temp_path)
 
+    # PID ile beklemek, aynı isimde başka GSPN EXE süreçlerinin updater'ı kilitlemesini önler.
+    current_pid = os.getpid()
+
     lines = [
         "@echo off",
         "setlocal",
         f'cd /d "{exe_dir}"',
-        ":waitloop",
-        f'tasklist /FI "IMAGENAME eq {target_name}" | find /I "{target_name}" >nul',
+        ":waitpid",
+        f'tasklist /FI "PID eq {current_pid}" | find "{current_pid}" >nul',
         "if not errorlevel 1 (",
         "  timeout /t 1 /nobreak >nul",
-        "  goto waitloop",
+        "  goto waitpid",
         ")",
         f'del /f /q "{target_name}.old" 2>nul',
         f'move /y "{target_name}" "{target_name}.old" >nul',
@@ -198,4 +213,6 @@ def download_and_install(root, download_url, current_exe_name, new_version):
     except Exception:
         pass
 
-    root.after(100, root.destroy)
+    # EXE'nin serbest kalması için süreci tamamen sonlandır.
+    root.destroy()
+    os._exit(0)

@@ -9,7 +9,7 @@ import gspn_engine as eng
 import auto_update
 
 APP_TITLE = "GSPN Otomasyon Merkezi"
-APP_VERSION = "2.2.7"
+APP_VERSION = "2.2.8"
 DEFAULT_INTERVAL = 30
 
 
@@ -740,6 +740,7 @@ class GSPNGUI(tk.Tk):
         self._update_check_started = True
 
         self._log(f"Güncelleme kontrolü başladı. Mevcut sürüm: v{APP_VERSION}")
+        self._log("Güncelleme kaynağı: GitHub Latest Release API")
 
         try:
             result = auto_update.check_for_update(APP_VERSION)
