@@ -189,10 +189,12 @@ def download_and_install(root, download_url, current_exe_name, new_version):
         "  timeout /t 1 /nobreak >nul",
         "  goto waitpid",
         ")",
+        "timeout /t 2 /nobreak >nul",
         f'del /f /q "{target_name}.old" 2>nul',
         f'move /y "{target_name}" "{target_name}.old" >nul',
         f'move /y "{temp_name}" "{target_name}" >nul',
         f'if not exist "{target_name}" exit /b 2',
+        "timeout /t 2 /nobreak >nul",
         f'start "" "{target_name}"',
         "timeout /t 3 /nobreak >nul",
         f'del /f /q "{target_name}.old" 2>nul',
@@ -213,6 +215,16 @@ def download_and_install(root, download_url, current_exe_name, new_version):
     except Exception:
         pass
 
-    # EXE'nin serbest kalması için süreci tamamen sonlandır.
-    root.destroy()
-    os._exit(0)
+    # PyInstaller --onefile uygulamasını zorla os._exit() ile öldürmüyoruz.
+    # Ana pencereyi kontrollü kapatıp mainloop'un doğal şekilde bitmesine izin veriyoruz.
+    # Böylece _MEI geçici klasörünün temizlenmesi sırasında pyiboot01_bootstrap hatası oluşmaz.
+    try:
+        root.after(100, root.quit)
+        root.after(200, root.destroy)
+    except Exception:
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
+    return

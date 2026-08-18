@@ -9,7 +9,7 @@ import gspn_engine as eng
 import auto_update
 
 APP_TITLE = "GSPN Otomasyon Merkezi"
-APP_VERSION = "2.2.9"
+APP_VERSION = "2.2.10"
 DEFAULT_INTERVAL = 30
 
 
@@ -777,6 +777,7 @@ class GSPNGUI(tk.Tk):
             msg + "\nŞimdi güncellensin mi?"
         ):
             self._append_log(f"Yeni sürüm indiriliyor: v{remote_version}")
+            self._append_log("Güncelleme sonrası uygulama kontrollü şekilde yeniden başlatılacak.")
 
             try:
                 auto_update.download_and_install(
