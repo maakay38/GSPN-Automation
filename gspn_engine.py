@@ -1,6 +1,7 @@
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import Select, WebDriverWait
 import re
 import time
@@ -1406,168 +1407,321 @@ def accept_optional_alerts(driver, first_timeout=10, second_timeout=5):
 
 def click_save(driver):
     """
-    Ana Save'e basar.
-    Ardından GSPN'nin HTML tabanlı Confirm Notice penceresi çıkarsa,
-    popup içindeki ikinci Save butonunu ekran konumuna göre bulup JS ile tıklar.
+    SAVE DIRECT FIX v2.2.18
+
+    Amaç:
+    - Önce tüm frame/iframe contextlerinde sayfayı en üste al.
+    - Exact "Save" butonunu DOM üzerinden tespit et.
+    - Öncelik: input[value='Save'] / button text='Save'
+    - Tıklama: native mouse event zinciri + JS .click() + Selenium click fallback.
+    - Hangi frame/path'te tıklandığını logla.
+    - Confirm Notice -> Save akışı korunur.
     """
-    save_btn = find_button_by_text_or_value(driver, "Save")
-    if save_btn is None:
-        raise RuntimeError("Ana Save butonu bulunamadı.")
 
-    log("Ana Save butonu bulundu.")
-    log("  Tag     : " + save_btn.tag_name)
-    log("  ID      : " + (safe_attr(save_btn, "id") or "-"))
-    log("  OnClick : " + (safe_attr(save_btn, "onclick") or "-"))
+    def switch_to_frame_path(path):
+        driver.switch_to.default_content()
+        for idx in path:
+            frames = driver.find_elements(By.CSS_SELECTOR, "iframe, frame")
+            if idx >= len(frames):
+                raise RuntimeError(f"Frame path geçersiz: {path}")
+            driver.switch_to.frame(frames[idx])
 
-    click_element(driver, save_btn)
-    log("Ana Save'e basıldı.")
-    time.sleep(0.8)
-
-    # Önce standart JS alert/confirm varsa kabul et.
-    for _ in range(3):
+    def scroll_top_here():
         try:
-            alert = driver.switch_to.alert
-            log("Save sonrası JS popup: " + (alert.text or "(metin yok)"))
-            alert.accept()
-            log("JS popup -> Tamam/OK")
-            time.sleep(0.5)
+            driver.execute_script("""
+                try { window.scrollTo(0, 0); } catch(e) {}
+                try {
+                    document.documentElement.scrollTop = 0;
+                    document.body.scrollTop = 0;
+                } catch(e) {}
+            """)
         except Exception:
-            break
+            pass
 
-    def visible_save_candidates_in_context():
-        result = []
+    def exact_save_elements():
         xpaths = [
-            "//input[@value='Save']",
-            "//button[normalize-space()='Save']",
-            "//a[normalize-space()='Save']",
-            "//span[normalize-space()='Save']",
+            "//input[translate(normalize-space(@value),'SAVE','save')='save']",
+            "//button[translate(normalize-space(.),'SAVE','save')='save']",
+            "//a[translate(normalize-space(.),'SAVE','save')='save']",
         ]
-
+        out = []
+        seen = set()
         for xp in xpaths:
             try:
                 for el in driver.find_elements(By.XPATH, xp):
                     try:
-                        if not el.is_displayed():
+                        if el.id in seen:
                             continue
+                        seen.add(el.id)
+                        out.append(el)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        return out
 
-                        r = driver.execute_script("""
-                            const r = arguments[0].getBoundingClientRect();
-                            return {
-                                x:r.x, y:r.y, width:r.width, height:r.height,
-                                display:getComputedStyle(arguments[0]).display,
-                                visibility:getComputedStyle(arguments[0]).visibility
-                            };
-                        """, el)
+    def rect(el):
+        try:
+            return driver.execute_script("""
+                const r = arguments[0].getBoundingClientRect();
+                return {
+                    x:r.x,y:r.y,width:r.width,height:r.height,
+                    right:r.right,bottom:r.bottom
+                };
+            """, el)
+        except Exception:
+            return {"x":0,"y":99999,"width":0,"height":0,"right":0,"bottom":0}
 
-                        if float(r.get("width", 0)) <= 0 or float(r.get("height", 0)) <= 0:
-                            continue
+    def collect_frame_paths(path=(), depth=0, max_depth=7):
+        paths = [path]
+        if depth >= max_depth:
+            return paths
+        try:
+            switch_to_frame_path(path)
+            frames = driver.find_elements(By.CSS_SELECTOR, "iframe, frame")
+            count = len(frames)
+        except Exception:
+            count = 0
+        for i in range(count):
+            paths.extend(collect_frame_paths(path + (i,), depth + 1, max_depth))
+        return paths
 
-                        result.append((el, r))
+    def collect_candidates():
+        candidates = []
+        paths = collect_frame_paths()
+        for path in paths:
+            try:
+                switch_to_frame_path(path)
+                scroll_top_here()
+                time.sleep(0.08)
+
+                try:
+                    vw = float(driver.execute_script("return window.innerWidth || 1366;"))
+                except Exception:
+                    vw = 1366.0
+
+                for el in exact_save_elements():
+                    try:
+                        r = rect(el)
+                        tag = el.tag_name
+                        value = safe_attr(el, "value") or ""
+                        text = (el.text or "").strip()
+                        onclick = safe_attr(el, "onclick") or ""
+                        disabled = bool(safe_attr(el, "disabled"))
+                        displayed = False
+                        try:
+                            displayed = el.is_displayed()
+                        except Exception:
+                            pass
+
+                        # Üst araç çubuğundaki Save'i hedefle:
+                        # - sayfayı en üste aldıktan sonra y küçük olmalı
+                        # - mümkün olduğunca sağda olmalı
+                        # - disabled olmamalı
+                        y = float(r.get("y", 99999))
+                        right_gap = max(0.0, vw - float(r.get("right", 0)))
+
+                        score = abs(y) * 20.0 + right_gap
+                        if tag.lower() == "input":
+                            score -= 100.0
+                        if value.strip().lower() == "save":
+                            score -= 150.0
+                        if displayed:
+                            score -= 50.0
+                        if disabled:
+                            score += 10000.0
+
+                        candidates.append({
+                            "path": path,
+                            "score": score,
+                            "tag": tag,
+                            "value": value,
+                            "text": text,
+                            "onclick": onclick,
+                            "disabled": disabled,
+                            "displayed": displayed,
+                            "rect": r,
+                        })
                     except Exception:
                         pass
             except Exception:
                 pass
 
-        return result
+        candidates.sort(key=lambda c: c["score"])
+        return candidates
 
-    def find_popup_save_recursive(depth=0, max_depth=6):
-        """
-        Popup Save'i ana Save'den ayırmak için:
-        - y > 70 olan görünür Save'leri tercih eder.
-        - ekran merkezine yakın olanı seçer.
-        """
-        candidates = visible_save_candidates_in_context()
-
-        if candidates:
-            try:
-                vw = float(driver.execute_script("return window.innerWidth || 1366;"))
-                vh = float(driver.execute_script("return window.innerHeight || 768;"))
-            except Exception:
-                vw, vh = 1366.0, 768.0
-
-            scored = []
-            for el, r in candidates:
-                x = float(r.get("x", 0))
-                y = float(r.get("y", 0))
-                w = float(r.get("width", 0))
-                h = float(r.get("height", 0))
-                cx = x + w / 2
-                cy = y + h / 2
-
-                # Ana Save genellikle sayfanın en üst sağında (y < 60).
-                popup_bonus = 0 if y > 70 else 5000
-
-                # Popup Save çoğunlukla ekranın orta-üst bölümündedir.
-                center_score = abs(cx - vw / 2) + abs(cy - min(vh * 0.28, 260)) * 2
-                score = popup_bonus + center_score
-
-                scored.append((score, el, r))
-
-            scored.sort(key=lambda item: item[0])
-
-            # y > 70 olan aday varsa popup kabul et.
-            for score, el, r in scored:
-                if float(r.get("y", 0)) > 70:
-                    return el, r
-
-        if depth >= max_depth:
+    def find_exact_element_in_current():
+        els = exact_save_elements()
+        if not els:
             return None
 
+        # Aynı frame içinde en üst/sağ adayı seç.
         try:
-            frames = driver.find_elements(By.CSS_SELECTOR, "iframe, frame")
+            vw = float(driver.execute_script("return window.innerWidth || 1366;"))
         except Exception:
-            frames = []
+            vw = 1366.0
 
-        for i in range(len(frames)):
+        ranked = []
+        for el in els:
             try:
-                frames = driver.find_elements(By.CSS_SELECTOR, "iframe, frame")
-                driver.switch_to.frame(frames[i])
-
-                found = find_popup_save_recursive(depth + 1, max_depth)
-                if found is not None:
-                    return found
-
-                driver.switch_to.parent_frame()
+                r = rect(el)
+                y = float(r.get("y", 99999))
+                right_gap = max(0.0, vw - float(r.get("right", 0)))
+                value = (safe_attr(el, "value") or "").strip().lower()
+                score = abs(y) * 20.0 + right_gap
+                if value == "save":
+                    score -= 150.0
+                ranked.append((score, el, r))
             except Exception:
-                try:
-                    driver.switch_to.parent_frame()
-                except Exception:
-                    driver.switch_to.default_content()
+                pass
+        ranked.sort(key=lambda x: x[0])
+        return ranked[0] if ranked else None
 
-        return None
-
-    popup_clicked = False
-    end_time = time.time() + 10
-
-    while time.time() < end_time and not popup_clicked:
+    def direct_dom_click(el, label):
+        # Görünür alana al.
         try:
-            driver.switch_to.default_content()
+            driver.execute_script("""
+                arguments[0].scrollIntoView({block:'center', inline:'center'});
+            """, el)
+            time.sleep(0.2)
         except Exception:
             pass
 
-        found = find_popup_save_recursive()
+        # 1) Gerçek mouse event zinciri + click
+        try:
+            ok = driver.execute_script("""
+                const el = arguments[0];
+                if (!el) return false;
+                try { el.focus(); } catch(e) {}
+                const opts = {bubbles:true,cancelable:true,view:window,button:0};
+                ['mouseover','mouseenter','mousemove','mousedown','mouseup','click']
+                  .forEach(t => el.dispatchEvent(new MouseEvent(t, opts)));
+                return true;
+            """, el)
+            if ok:
+                log(label + " DOM MouseEvent zinciri ile tetiklendi.")
+                return True
+        except Exception as e:
+            log(label + f" DOM MouseEvent başarısız: {e}")
 
-        if found is not None:
-            popup_save, rect = found
-            log(
-                "Confirm Notice Save adayı bulundu: "
-                f"x={rect.get('x')} y={rect.get('y')} "
-                f"w={rect.get('width')} h={rect.get('height')}"
-            )
+        # 2) JS .click()
+        try:
+            driver.execute_script("arguments[0].click();", el)
+            log(label + " JavaScript .click() ile tetiklendi.")
+            return True
+        except Exception as e:
+            log(label + f" JS .click() başarısız: {e}")
 
-            # Normal click yerine doğrudan JS click kullan.
-            try:
-                driver.execute_script("""
-                    arguments[0].scrollIntoView({block:'center', inline:'center'});
-                    arguments[0].click();
-                """, popup_save)
-                popup_clicked = True
-                log("Confirm Notice -> Save basıldı.")
-            except Exception as e:
-                log("Popup Save JS click hatası: " + str(e))
+        # 3) Selenium native
+        try:
+            el.click()
+            log(label + " Selenium native click ile basıldı.")
+            return True
+        except Exception as e:
+            log(label + f" Selenium click başarısız: {e}")
 
-            time.sleep(1.0)
+        # 4) ActionChains
+        try:
+            ActionChains(driver).move_to_element(el).pause(0.15).click(el).perform()
+            log(label + " ActionChains ile basıldı.")
+            return True
+        except Exception as e:
+            raise RuntimeError(f"{label} hiçbir yöntemle tıklanamadı: {e}")
+
+    log("SAVE DIRECT FIX: tüm frame'lerde exact Save aranıyor...")
+
+    candidates = collect_candidates()
+
+    if not candidates:
+        raise RuntimeError("Hiçbir frame içinde exact 'Save' butonu bulunamadı.")
+
+    log(f"Bulunan Save adayı sayısı: {len(candidates)}")
+    for i, c in enumerate(candidates[:10], 1):
+        r = c["rect"]
+        log(
+            f"  [{i}] path={c['path']} score={c['score']:.1f} "
+            f"tag={c['tag']} value={c['value']!r} text={c['text']!r} "
+            f"displayed={c['displayed']} disabled={c['disabled']} "
+            f"x={r.get('x')} y={r.get('y')} w={r.get('width')} h={r.get('height')} "
+            f"onclick={c['onclick']!r}"
+        )
+
+    chosen = candidates[0]
+    switch_to_frame_path(chosen["path"])
+    scroll_top_here()
+    time.sleep(0.2)
+
+    current = find_exact_element_in_current()
+    if current is None:
+        raise RuntimeError(
+            f"Seçilen frame path'te Save yeniden bulunamadı: {chosen['path']}"
+        )
+
+    _, save_btn, save_rect = current
+
+    log(
+        "ANA SAVE SEÇİLDİ -> "
+        f"path={chosen['path']} "
+        f"x={save_rect.get('x')} y={save_rect.get('y')} "
+        f"value={safe_attr(save_btn,'value')!r} "
+        f"text={(save_btn.text or '').strip()!r} "
+        f"onclick={safe_attr(save_btn,'onclick')!r}"
+    )
+
+    direct_dom_click(save_btn, "Ana Save")
+    time.sleep(1.2)
+
+    # Ana Save sonrası standart alert/confirm.
+    for popup_no in range(1, 4):
+        try:
+            alert = driver.switch_to.alert
+            log(f"Save sonrası JS popup {popup_no}: " + (alert.text or "(metin yok)"))
+            alert.accept()
+            log(f"JS popup {popup_no} -> Tamam/OK")
+            time.sleep(0.5)
+        except Exception:
             break
+
+    # Confirm Notice için default_content'ten tüm frame'leri tekrar tara.
+    popup_end = time.time() + 10
+    popup_clicked = False
+
+    while time.time() < popup_end and not popup_clicked:
+        popup_candidates = collect_candidates()
+
+        # Popup Save genellikle sayfanın ortalarındadır; üst toolbar Save'i ele.
+        filtered = []
+        for c in popup_candidates:
+            y = float(c["rect"].get("y", 0))
+            if y > 70 and c["displayed"] and not c["disabled"]:
+                filtered.append(c)
+
+        if filtered:
+            filtered.sort(key=lambda c: c["score"])
+            chosen_popup = filtered[0]
+            switch_to_frame_path(chosen_popup["path"])
+
+            # Aynı frame'deki exact Save'lerden y>70 olanı seç.
+            popup_els = []
+            for el in exact_save_elements():
+                try:
+                    rr = rect(el)
+                    if float(rr.get("y", 0)) > 70:
+                        popup_els.append((float(rr.get("y", 0)), el, rr))
+                except Exception:
+                    pass
+
+            if popup_els:
+                popup_els.sort(key=lambda x: x[0])
+                _, popup_save, rr = popup_els[0]
+                log(
+                    "Confirm Notice Save seçildi -> "
+                    f"path={chosen_popup['path']} x={rr.get('x')} y={rr.get('y')}"
+                )
+                direct_dom_click(popup_save, "Confirm Notice -> Save")
+                popup_clicked = True
+                time.sleep(1.0)
+                break
 
         time.sleep(0.25)
 
@@ -1577,19 +1731,23 @@ def click_save(driver):
         pass
 
     if not popup_clicked:
-        log("Confirm Notice popup Save bulunamadı veya popup çıkmadı.")
+        log("Confirm Notice görünmedi; ek popup Save gerekmemiş olabilir.")
 
-    # Popup içindeki Save sonrası gelebilecek alert/confirm mesajlarını kabul et.
-    end_alert = time.time() + 6
-    while time.time() < end_alert:
+    # Popup Save sonrası JS alert/confirm.
+    for popup_no in range(1, 4):
         try:
             alert = driver.switch_to.alert
-            log("Popup Save sonrası mesaj: " + (alert.text or "(metin yok)"))
+            log(
+                f"Popup Save sonrası mesaj {popup_no}: " +
+                (alert.text or "(metin yok)")
+            )
             alert.accept()
-            log("Popup Save sonrası mesaj -> Tamam")
+            log(f"Popup Save sonrası mesaj {popup_no} -> Tamam")
             time.sleep(0.5)
         except Exception:
             break
+
+    log("SAVE DIRECT FIX akışı tamamlandı.")
 
 def step11_serial_warranty_and_save(driver):
     log("\n[ADIM 11] Seri/IMEI tamamla > Garanti Sorgula > Popup(lar) > Save...")
