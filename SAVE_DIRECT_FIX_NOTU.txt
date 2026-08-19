@@ -1,0 +1,27 @@
+GSPN Otomasyon v2.2.18 - SAVE DIRECT FIX
+=========================================
+
+Bu sürümde Save yaklaşımı değiştirildi.
+
+- Tüm frame/iframe path'leri tek tek taranır.
+- Her frame en üste kaydırılır.
+- Exact Save:
+    input[value='Save']
+    button text='Save'
+    a text='Save'
+  aranır.
+- Bulunan tüm adaylar canlı loga yazılır.
+- En güçlü üst-sağ Save adayı seçilir.
+- Tıklama sırası:
+    DOM MouseEvent zinciri
+    JavaScript .click()
+    Selenium native click
+    ActionChains
+- Confirm Notice -> Save desteği korunur.
+
+Önemli:
+Testten sonra Canlı İşlem Günlüğündeki
+'Bulunan Save adayı sayısı'
+ve '[1] path=...'
+satırlarını paylaşın.
+Bu log gerçek Save'in hangi frame'de olduğunu kesin gösterecektir.

@@ -1,0 +1,25 @@
+GSPN Otomasyon v2.2.21 - SERİ/IMEI SKIP FIX
+==============================================
+
+Düzeltilen davranış:
+
+1) Hedef Seri/IMEI DOLU
+   -> hiçbir şey yapma
+   -> Save'e devam et
+
+2) Hedef Seri/IMEI BOŞ + AKTİF
+   -> kaynak Seri/IMEI değerini yaz
+   -> Garanti Sorgula
+   -> popup(lar)
+   -> Save
+
+3) Hedef Seri/IMEI BOŞ + PASİF/READONLY
+   -> artık RuntimeError VERMEZ
+   -> alanı atlar
+   -> doğrudan Save işlemine devam eder
+
+Bu düzeltmede Save mekanizmasının kendisine dokunulmamıştır.
+Amaç, Save aşamasına ulaşmayı engelleyen Seri/IMEI hatasını kaldırmaktır.
+
+Beklenen log:
+Hedef Seri/IMEI alanı boş fakat pasif/readonly; alan atlanıyor ve doğrudan Save işlemine geçiliyor.

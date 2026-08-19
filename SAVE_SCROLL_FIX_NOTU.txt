@@ -1,0 +1,27 @@
+GSPN Otomasyon v2.2.17 - SAVE SCROLL FIX
+==========================================
+
+Sorun:
+Save butonu sayfanın mevcut görünür alanı dışında kaldığında v2.2.16
+ana Save'i yeterince güvenilir seçemiyordu.
+
+Düzeltme:
+- Save'in viewport'ta görünür olması artık şart değil.
+- DOM'daki Save adayları görünür/görünmez olarak taranır.
+- Tüm frame/iframe ağacı aranır.
+- En güçlü ana Save adayı skorlanır.
+- Tıklamadan önce scrollIntoView() ile ekrana getirilir.
+- Scroll sonrası konum loglanır.
+- Tıklama sırası:
+  normal click -> ActionChains -> JavaScript click.
+- Confirm Notice -> Save akışı korunmuştur.
+- Diğer stabil otomasyon adımlarına dokunulmamıştır.
+
+Canlı logda:
+Ana Save bulundu
+Ana Save görünür alana kaydırıldı
+Ana Save scroll sonrası konum
+Ana Save ... ile basıldı
+Confirm Notice -> Save ...
+Save Scroll FIX akışı tamamlandı
+satırları görülmelidir.

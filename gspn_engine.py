@@ -1771,7 +1771,9 @@ def step11_serial_warranty_and_save(driver):
         log("Doğrudan Save'e geçiliyor.")
     else:
         if (not target.is_enabled()) or safe_attr(target, "disabled") or safe_attr(target, "readonly"):
-            raise RuntimeError("Hedef Seri/IMEI alanı boş fakat pasif/readonly.")
+            log("Hedef Seri/IMEI alanı boş fakat pasif/readonly; alan atlanıyor ve doğrudan Save işlemine geçiliyor.")
+            click_save(driver)
+            return
 
         written = set_text_value(driver, target, source_value)
         if written != source_value:

@@ -1,0 +1,11 @@
+GSPN Otomasyon v2.2.16 - SAVE FIX
+===================================
+
+- Güncel referans paket temel alınmıştır.
+- Ana Save artık yalnız aktif frame'de aranmaz.
+- default_content + tüm frame/iframe ağacı taranır.
+- Üst-sağdaki görünür Save ana Save olarak önceliklendirilir.
+- Tıklama sırası: normal click -> ActionChains -> JavaScript click.
+- Mevcut Confirm Notice -> Save desteği korunmuştur.
+- Save ve popup konum/frame bilgileri canlı loga yazılır.
+- Diğer stabil otomasyon adımlarına dokunulmamıştır.

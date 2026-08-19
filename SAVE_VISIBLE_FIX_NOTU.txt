@@ -1,0 +1,24 @@
+GSPN Otomasyon v2.2.19 - SAVE VISIBLE FIX
+==========================================
+
+Yeni yaklaşım:
+- Save'e basmadan önce detay ekranındaki açılır bölümler otomatik kapatılır.
+- Hedef bölümler:
+  Genel Bilgi
+  Müşteri Bilgileri
+  Ürün Bilgileri
+  Product Repair
+  Parça Bilgileri
+  Ek
+- Ardından sayfa en üste kaydırılır.
+- Böylece sağ üstteki gerçek Save fiziksel olarak görünür hale getirilir.
+- Sonrasında v2.2.18'deki exact Save tespit/tıklama mekanizması çalışır.
+- Confirm Notice -> Save akışı korunur.
+- Diğer stabil otomasyon adımlarına dokunulmamıştır.
+
+Canlı logda beklenen:
+Save öncesi detay bölümleri kapatılıyor...
+Bölüm kapat/aç tıklandı: ...
+Detay ekranı en üste kaydırıldı.
+SAVE VISIBLE FIX: bölümler kapatıldı, exact Save aranıyor...
+ANA SAVE SEÇİLDİ -> ...
