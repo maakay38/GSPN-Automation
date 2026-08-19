@@ -1,5 +1,5 @@
 {
-  "version": "2.2.21",
+  "version": "2.2.22",
   "download_url": "https://github.com/maakay38/GSPN-Automation/releases/latest/download/GSPN_Otomasyon.exe",
-  "notes": "GSPN Otomasyon v2.2.21 - Seri/IMEI Skip FIX: boş ve pasif/readonly hedef Seri/IMEI alanında hata verme; alanı atla ve Save'e devam et"
+  "notes": "GSPN Otomasyon v2.2.22"
 }
